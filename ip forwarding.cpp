@@ -15,7 +15,8 @@
 
 #define ETHERTYPE_IP	0x0800
 
-#define _TEST_CASE_3
+#define _TEST_CASE_5
+//#define __DEBUG
 
 /* [void] [Forwarding] [] */
 //void ip_forwarding(_In_ pcap_t* _dev_handle, _In_ struct ether_header* _pEth, _In_ pcap_pkthdr* _header, _In_ const uint8_t* _data);
@@ -108,6 +109,15 @@ int main(void)
 	_info.g_ip = "192.168.42.1";
 #endif
 
+#ifdef _TEST_CASE_5
+	_info.a_host = "00:0c:29:62:bf:dc";
+	_info.a_ip = "192.168.42.16";
+	_info.v_host = "18:67:b0:ca:b4:b1";
+	_info.v_ip = "192.168.42.30";
+	_info.g_host = "88:36:6c:7a:56:40";
+	_info.g_ip = "192.168.42.1";
+#endif
+
 	pcap_t* dev_handle = get_pcap_handle();
 	if (dev_handle == NULL)
 	{
@@ -133,7 +143,7 @@ int main(void)
 	set_host(_info.a_host,Eth.src_host); 
 	Eth.ether_type = htons(ETHERTYPE_IP);
 
-	while (true)
+	for(;;)
 	{
 		/*if (pcap_next_ex(dev_handle, &header, &data) <= 0) continue;
 		else if (header->len == 0) continue;
@@ -155,6 +165,48 @@ int main(void)
 		{
 			memcpy(data, &Eth, sizeof(Eth));
 			pcap_sendpacket(dev_handle, data, header.len);
+
+#ifdef __DEBUG
+			struct ether_header* pEth;
+			pEth = (struct ether_header*)data;
+
+			printf("\nDestination Addr : %02X:%02X:%02X:%02X:%02X:%02X\n",
+				pEth->dst_host[0], pEth->dst_host[1], pEth->dst_host[2],
+				pEth->dst_host[3], pEth->dst_host[4], pEth->dst_host[5]);
+
+			printf("Source Addr : %02X:%02X:%02X:%02X:%02X:%02X\n",
+				pEth->src_host[0], pEth->src_host[1], pEth->src_host[2],
+				pEth->src_host[3], pEth->src_host[4], pEth->src_host[5]);
+
+			printf("Ether Type : %04X\n\n", ntohs(pEth->ether_type));
+
+			struct ip_header* pIp;
+			pIp = (struct ip_header*)(data + sizeof(*pEth));
+			if (pIp->protocol == 1)
+			{
+				printf("IP Protocol : ICMP\n");
+				printf("Source IP Addr : %u.%u.%u.%u\n",
+					pIp->src_ip[0], pIp->src_ip[1], pIp->src_ip[2], pIp->src_ip[3]);
+				printf("Destination IP Addr : %u.%u.%u.%u\n\n",
+					pIp->dst_ip[0], pIp->dst_ip[1], pIp->dst_ip[2], pIp->dst_ip[3]);
+			}
+			else if (pIp->protocol == 6)
+			{
+				printf("IP Protocol : TCP\n");
+				printf("Source IP Addr : %u.%u.%u.%u\n",
+					pIp->src_ip[0], pIp->src_ip[1], pIp->src_ip[2], pIp->src_ip[3]);
+				printf("Destination IP Addr : %u.%u.%u.%u\n\n",
+					pIp->dst_ip[0], pIp->dst_ip[1], pIp->dst_ip[2], pIp->dst_ip[3]);
+			}
+			else if (pIp->protocol == 17)
+			{
+				printf("IP Protocol : UDP\n");
+				printf("Source IP Addr : %u.%u.%u.%u\n",
+					pIp->src_ip[0], pIp->src_ip[1], pIp->src_ip[2], pIp->src_ip[3]);
+				printf("Destination IP Addr : %u.%u.%u.%u\n\n",
+					pIp->dst_ip[0], pIp->dst_ip[1], pIp->dst_ip[2], pIp->dst_ip[3]);
+			}
+#endif
 		}
 	}
 	return 0;
@@ -250,8 +302,8 @@ pcap_t* get_pcap_handle()
 	bpf_program fcode;
 	char filter_rule[2500];
 	snprintf(filter_rule, sizeof(filter_rule),
-		"ip and ether src %s and not ip broadcast and not ip dst %s",
-		_info.v_host, _info.a_ip);
+		"icmp and ether src %s and not ip broadcast",
+		_info.v_host);
 	if (pcap_compile(_handle, &fcode, filter_rule, 1, mask) < 0)
 	{
 		printf("[ERROR] pcap_compile() : %s\n", errbuf);
