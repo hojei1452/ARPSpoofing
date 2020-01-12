@@ -96,7 +96,7 @@ typedef struct _tcp_header_flags
 void ip_checksum(_Inout_ struct ip_header* _pIp);
 
 /* [void] [Make TCP Header Checksum] [_pIp(IP Header Structure), _pTcp(TCP Header Structure)] */
-void tcp_checksum(_Inout_ struct ip_header* _pIp, _Inout_ struct tcp_header* _pTcp);
+void tcp_checksum(_In_ ip_header* _pIp, _Inout_ tcp_header* _pTcp);
 
 /* [void] [TCP Flags Check] [_tcp_flags(Header Length(4Bit) + TCP Flags(12bit)), _tFalgs(return flags structure)] */
 void tcp_flags_check(_In_ uint16_t _tcp_flags, _Inout_ ptcp_header_flags _tFalgs);
@@ -238,7 +238,10 @@ int main(void)
 					pTcp->ack = htonl(ntohl(pTcp->seq) + 1);
 					pTcp->seq = 0;
 					pTcp->flags = htons(0x5014);	// RST, ACK
-					tcp_checksum(pIp, pTcp);
+					//tcp_checksum(pIp, pTcp);
+					TcpheaderChecksum(pIp, pTcp);
+
+					// TODO : flags, checksum
 					memcpy(data + sizeof(*pEth) + sizeof(*pIp), pTcp, header.len - (sizeof(*pEth) + sizeof(*pIp)));
 
 					// Backwarding
@@ -340,36 +343,51 @@ void ip_checksum(_Inout_ struct ip_header* _pIp)
 	_pIp->checksum = checksum;
 }
 
-void tcp_checksum(_Inout_ struct ip_header* _pIp, _Inout_ struct tcp_header* _pTcp)
+void tcp_checksum(_In_ ip_header* _pIp, _Inout_ tcp_header* _pTcp)
 {
-	uint16_t* pTcps = (uint16_t*)_pTcp, *tempIp;
-	uint16_t dataLen = ntohs(_pIp->total_len) - sizeof(*_pIp), len = dataLen, checksum;
-	uint32_t check = 0;
+	unsigned short* pTcpH = (unsigned short*)_pIp;
+	unsigned short* tempIP;
+	unsigned short dataLen = (ntohs(_pIp->total_len)) - sizeof(ip_header);
+	unsigned short nLen = dataLen;
 
-	len >>= 1;
-	_pTcp->checksum = 0;
+	unsigned chksum = 0;
 
-	for (int i = 0; i < len; i++)
-		check += *pTcps++;
+	unsigned short finalchk;
 
-	if (dataLen % 2)
-		check += *pTcps++ & 0x00ff;
+	nLen >>= 1;
+	_pIp->checksum = 0;
 
-	tempIp = (uint16_t*)(&_pIp->src_ip);
+	for (int i = 0; i < nLen; i++)
+	{
+		chksum += *pTcpH++;
+	}
+
+	if (dataLen % 2 == 1)
+	{
+		chksum += *pTcpH++ & 0x00ff;
+	}
+
+	tempIP = (USHORT*)(&_pIp->src_ip);
 	for (int i = 0; i < 2; i++)
-		check += *tempIp++;
-
-	tempIp = (uint16_t*)(&_pIp->dst_ip);
+	{
+		chksum += *tempIP++;
+	}
+	tempIP = (USHORT*)(&_pIp->dst_ip);
 	for (int i = 0; i < 2; i++)
-		check += *tempIp++;
+	{
+		chksum += *tempIP++;
+	}
 
-	check += PROTOCOL_TCP;
-	check += htons(dataLen);
-	check = (check >> 16) + (check & 0xffff);
-	check += (check >> 16);
+	chksum += htons(6);
 
-	checksum = (~check & 0xffff);
-	_pTcp->checksum = checksum;
+	chksum += htons(dataLen);
+
+	chksum = (chksum >> 16) + (chksum & 0xffff);
+	chksum += (chksum >> 16);
+
+	finalchk = (~chksum & 0xffff);
+
+	_pIp->checksum = finalchk;
 }
 
 void tcp_flags_check(_In_ uint16_t _tcp_flags, _Inout_ ptcp_header_flags _tFalgs)
